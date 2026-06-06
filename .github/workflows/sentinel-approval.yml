@@ -1,0 +1,70 @@
+name: Sentinel-Dev Approval
+
+# 4-5. Human-in-the-loop result handler.
+# After Sentinel pings Poke, you reply from your phone. Your Poke automation
+# (see README) calls the GitHub repository_dispatch API with one of these
+# event types and a client_payload of { branch, issue }.
+on:
+  repository_dispatch:
+    types: [sentinel-approve, sentinel-decline]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      POKE_API_KEY: ${{ secrets.POKE_API_KEY }}
+      POKE_WEBHOOK_URL: ${{ vars.POKE_WEBHOOK_URL || 'https://poke.com/api/v1/inbound/api-message' }}
+      NOTIFY_EMAIL: ${{ vars.NOTIFY_EMAIL || 'princekmr14214@gmail.com' }}
+      DECISION: ${{ github.event.action == 'sentinel-approve' && 'approve' || 'decline' }}
+      BRANCH: ${{ github.event.client_payload.branch }}
+      ISSUE_NUMBER: ${{ github.event.client_payload.issue }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install Sentinel dependencies
+        run: npm ci || npm install
+
+      - name: Build Sentinel
+        run: npm run build
+
+      # 5. Approve -> draft PR + auto-merge. Decline -> delete branch.
+      - name: Finalize decision
+        run: node dist/index.js finalize
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+
+      - name: Email logs on decline
+        if: ${{ github.event.action == 'sentinel-decline' }}
+        uses: dawidd6/action-send-mail@v3
+        continue-on-error: true
+        with:
+          server_address: ${{ vars.SMTP_HOST || 'smtp.gmail.com' }}
+          server_port: ${{ vars.SMTP_PORT || 587 }}
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: "[Sentinel-Dev] Declined fix for #${{ github.event.client_payload.issue }}"
+          to: ${{ vars.NOTIFY_EMAIL || 'princekmr14214@gmail.com' }}
+          from: Sentinel-Dev <${{ secrets.SMTP_USERNAME }}>
+          body: |
+            You declined Sentinel-Dev's proposed fix on branch
+            ${{ github.event.client_payload.branch }} for issue #${{ github.event.client_payload.issue }}.
+
+            The branch has been deleted. Logs for the original run are stored as the
+            "sentinel-logs" artifact on the run that produced the fix.

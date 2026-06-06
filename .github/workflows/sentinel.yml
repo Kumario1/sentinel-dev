@@ -1,0 +1,101 @@
+name: Sentinel-Dev
+
+# 1. Trigger on label
+# Runs whenever a label is added to an issue OR a pull request.
+# The job-level `if` makes sure we only do work for the `Sentinel-Fix` label.
+on:
+  issues:
+    types: [labeled]
+  pull_request:
+    types: [labeled]
+
+# Least-privilege defaults; the job below bumps to write where needed.
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: sentinel-${{ github.event.issue.number || github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  sentinel-fix:
+    # Only execute for the Sentinel-Fix label.
+    if: github.event.label.name == 'Sentinel-Fix'
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      LLM_PROVIDER: ${{ vars.LLM_PROVIDER || 'anthropic' }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      POKE_API_KEY: ${{ secrets.POKE_API_KEY }}
+      POKE_WEBHOOK_URL: ${{ vars.POKE_WEBHOOK_URL || 'https://poke.com/api/v1/inbound/api-message' }}
+      NOTIFY_EMAIL: ${{ vars.NOTIFY_EMAIL || 'princekmr14214@gmail.com' }}
+      TEST_COMMAND: ${{ vars.TEST_COMMAND }}
+    steps:
+      # 2. Environment & test suite -> pull down the code.
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install Sentinel dependencies
+        run: npm ci || npm install
+
+      # Build the orchestrator (TypeScript -> dist).
+      - name: Build Sentinel
+        run: npm run build
+
+      # 2-4. Run tests, AST-map the code, ask the LLM for a patch,
+      # create the sentinel/fix-issue-<n> branch and push it.
+      - name: Run Sentinel fix pipeline
+        id: fix
+        run: node dist/index.js fix
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+
+      # On any failure above, email the captured logs and clean up.
+      - name: Upload run logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sentinel-logs
+          path: sentinel.log
+          if-no-files-found: ignore
+
+      - name: Email logs on failure
+        if: failure()
+        uses: dawidd6/action-send-mail@v3
+        continue-on-error: true
+        with:
+          server_address: ${{ vars.SMTP_HOST || 'smtp.gmail.com' }}
+          server_port: ${{ vars.SMTP_PORT || 587 }}
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: "[Sentinel-Dev] Failed on #${{ github.event.issue.number || github.event.pull_request.number }}"
+          to: ${{ vars.NOTIFY_EMAIL || 'princekmr14214@gmail.com' }}
+          from: Sentinel-Dev <${{ secrets.SMTP_USERNAME }}>
+          body: |
+            Sentinel-Dev failed while processing #${{ github.event.issue.number || github.event.pull_request.number }}.
+
+            Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            Logs are attached.
+          attachments: sentinel.log
+
+      - name: Clean up branch on failure
+        if: failure()
+        continue-on-error: true
+        run: |
+          BRANCH="sentinel/fix-issue-${{ github.event.issue.number || github.event.pull_request.number }}"
+          git push origin --delete "$BRANCH" || true
