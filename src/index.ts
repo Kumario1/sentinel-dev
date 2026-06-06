@@ -1,24 +1,51 @@
-import * as ts from "typescript";
-import { execSync } from "child_process";
+import { loadDotEnv } from "./lib/dotenv";
+import { loadConfig } from "./config";
+import { runFix } from "./commands/fix";
+import { runFinalize } from "./commands/finalize";
+import { runServe } from "./commands/serve";
+import { runAuth } from "./commands/auth";
+import { runPing } from "./commands/ping";
+import { runCli } from "./cli/interactive";
+import { runMcpServer } from "./mcp/server";
+import { log } from "./logger";
 
-async function runSentinel() {
-    console.log("Sentinel-Dev starting analysis...");
-    
-    // 1. AST Analysis
-    // (In a real implementation, we would parse files and find relevant sections)
-    
-    // 2. Test Execution
-    try {
-        console.log("Running tests...");
-        execSync("npm test", { stdio: "inherit" });
-    } catch (error) {
-        console.log("Tests failed. Attempting LLM correction...");
-        // Call LLM and apply fixes
-    }
+async function main(): Promise<void> {
+  loadDotEnv(); // pick up .env before reading config
+  const command = process.argv[2] ?? "fix";
+  const cfg = loadConfig();
 
-    // 3. Push Progress to Poke
-    // (This would use fetch to hit a Poke webhook or ingest endpoint)
-    console.log("Pushing progress update to Poke...");
+  switch (command) {
+    case "fix":
+      await runFix(cfg);
+      break;
+    case "finalize":
+      await runFinalize(cfg);
+      break;
+    case "serve":
+      await runServe(cfg);
+      break;
+    case "login":
+    case "auth":
+      await runAuth(cfg);
+      break;
+    case "cli":
+      await runCli(cfg);
+      break;
+    case "ping":
+      await runPing(cfg);
+      break;
+    case "mcp":
+      await runMcpServer(cfg);
+      break;
+    default:
+      throw new Error(
+        `Unknown command: ${command} ` +
+          `(expected 'cli', 'fix', 'finalize', 'serve', 'login', 'ping', or 'mcp').`,
+      );
+  }
 }
 
-runSentinel().catch(console.error);
+main().catch((error) => {
+  log.error("Sentinel-Dev failed:", error?.stack ?? String(error));
+  process.exit(1);
+});
