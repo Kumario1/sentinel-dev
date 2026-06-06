@@ -3,13 +3,22 @@
   "version": "1.0.0",
   "main": "dist/index.js",
   "scripts": {
-    "start": "ts-node src/index.ts",
     "build": "tsc",
+    "cli": "ts-node src/index.ts cli",
+    "fix": "ts-node src/index.ts fix",
+    "finalize": "ts-node src/index.ts finalize",
+    "serve": "ts-node src/index.ts serve",
+    "login": "ts-node src/index.ts login",
+    "ping": "ts-node src/index.ts ping",
+    "mcp": "ts-node src/index.ts mcp",
+    "start": "ts-node src/index.ts cli",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "ts-node": "^10.9.1",
     "typescript": "^5.0.0",
-    "ts-node": "^10.9.1"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^20.0.0"
